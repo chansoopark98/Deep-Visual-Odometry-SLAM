@@ -1,6 +1,10 @@
 # Ignore files
 *.zip
-/modules/
+
+modules/DBoW2/
+# modules/DPRetrieval/
+# modules/DPViewer/
+# modules/eigen-3.4.0/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
