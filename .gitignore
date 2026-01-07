@@ -1,7 +1,7 @@
 # Ignore files
 *.zip
 
-modules/DBoW2/
+# modules/DBoW2/
 # modules/DPRetrieval/
 # modules/DPViewer/
 # modules/eigen-3.4.0/
