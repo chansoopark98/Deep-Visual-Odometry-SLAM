@@ -218,9 +218,9 @@ def train(args):
                     PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                     torch.save(net.state_dict(), PATH)
 
-                validation_results = validate(None, net)
-                if rank == 0:
-                    logger.write_dict(validation_results)
+                # validation_results = validate(None, net)
+                # if rank == 0:
+                #     logger.write_dict(validation_results)
 
                 torch.cuda.empty_cache()
                 net.train()

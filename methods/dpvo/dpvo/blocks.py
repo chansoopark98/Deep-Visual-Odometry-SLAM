@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import torch_scatter
+from . import torch_scatter
 
 class LayerNorm1D(nn.Module):
     def __init__(self, dim):
