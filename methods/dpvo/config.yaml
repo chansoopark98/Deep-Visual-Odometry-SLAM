@@ -21,7 +21,7 @@ training:
   name: dpvo
 
   # Resume from checkpoint (null or path to checkpoint)
-  ckpt: null
+  ckpt: ./methods/dpvo/dpvo.pth
 
   # Total training steps
   steps: 240000
@@ -60,7 +60,7 @@ loss:
 # DataLoader Configuration
 dataloader:
   # Batch size
-  batch_size: 32
+  batch_size: 1
 
   # Number of data loading workers
-  num_workers: 16
+  num_workers: 8

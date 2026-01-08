@@ -5,6 +5,7 @@ runs/
 
 # Ignore files
 *.zip
+*.pth
 
 # modules/DBoW2/
 # modules/DPRetrieval/
