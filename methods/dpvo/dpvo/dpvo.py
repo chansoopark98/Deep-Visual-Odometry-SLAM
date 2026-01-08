@@ -12,8 +12,8 @@ from .utils import *
 
 mp.set_start_method('spawn', True)
 
-
-autocast = torch.cuda.amp.autocast
+from functools import partial
+autocast = partial(torch.amp.autocast, 'cuda')
 Id = SE3.Identity(1, device="cuda")
 
 

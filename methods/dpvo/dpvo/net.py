@@ -19,7 +19,8 @@ from .utils import *
 from .ba import BA
 from . import projective_ops as pops
 
-autocast = torch.cuda.amp.autocast
+from functools import partial
+autocast = partial(torch.amp.autocast, 'cuda')
 import matplotlib.pyplot as plt
 
 DIM = 384
