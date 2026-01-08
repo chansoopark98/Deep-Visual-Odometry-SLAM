@@ -7,7 +7,7 @@ This guide documents the installation process for DPVO on modern NVIDIA GPUs (RT
 - **GPU**: NVIDIA RTX 5090 (Blackwell architecture, compute capability 12.0)
 - **CUDA**: 12.8
 - **Python**: 3.12
-- **PyTorch**: 2.8.0
+- **PyTorch**: 2.9.1
 
 ## Prerequisites
 
@@ -30,11 +30,9 @@ conda activate visual_slam
 ### 2. Install Python Packages
 
 ```bash
-# PyTorch with CUDA 12.8 support
-pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+# Pytorch 2.9.1 with CUDA 12.8
+pip install torch torchvision
 
-# PyTorch Scatter (for sparse operations)
-pip install torch-scatter -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
 
 # Other dependencies
 pip install tensorboard numba tqdm einops pypose kornia numpy plyfile evo opencv-python yacs
@@ -69,7 +67,7 @@ DPViewer requires the Pangolin library for 3D visualization.
 
 > **⚠️ CRITICAL: ABI Compatibility**
 >
-> Pangolin **MUST** be built with `-D_GLIBCXX_USE_CXX11_ABI=1` to match PyTorch 2.8.0.
+> Pangolin **MUST** be built with `-D_GLIBCXX_USE_CXX11_ABI=1` to match PyTorch 2.9.1.
 > If you have an existing Pangolin installation, you must rebuild it with this flag.
 > Otherwise, you will get `undefined symbol` errors when importing DPViewer.
 
@@ -87,7 +85,7 @@ cd Pangolin
 rm -rf build
 mkdir build && cd build
 
-# Build with CXX11 ABI=1 (MUST match PyTorch 2.8.0)
+# Build with CXX11 ABI=1 (MUST match PyTorch 2.9.1)
 cmake .. -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1"
 make -j$(nproc)
 sudo make install
@@ -167,7 +165,7 @@ After installation, verify by running:
 ```bash
 python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.version.cuda}'); print(f'GPU: {torch.cuda.get_device_name(0)}')"
 => 
-PyTorch: 2.8.0+cu128
+PyTorch: 2.9.1+cu128
 CUDA: 12.8
 GPU: NVIDIA GeForce RTX 5090
 
@@ -254,7 +252,7 @@ This error shows Pangolin was built with ABI=0 (uses `std::string`) but DPViewer
 python -c "import torch; print('CXX11_ABI:', torch._C._GLIBCXX_USE_CXX11_ABI)"
 ```
 
-PyTorch 2.8.0 uses **ABI=1** (True), so all linked libraries must also use ABI=1.
+PyTorch 2.9.1 uses **ABI=1** (True), so all linked libraries must also use ABI=1.
 
 #### Fixing ABI Mismatches
 
@@ -423,7 +421,7 @@ from torch.amp import autocast
 
 ## Code Modifications Summary
 
-### PyTorch 2.8 Compatibility
+### PyTorch 2.x Compatibility
 
 All `.type()` calls changed to `.scalar_type()` for PyTorch 2.x compatibility.
 
@@ -446,41 +444,4 @@ cmake_args = [
     "-DPython3_EXECUTABLE={}".format(sys.executable),
     # ...
 ]
-```
-
----
-
-## Quick Reference
-
-```bash
-# Full installation sequence
-conda create -n dpvo python=3.12
-conda activate dpvo
-
-pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-pip install torch-scatter -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
-pip install tensorboard numba tqdm einops pypose kornia numpy plyfile evo opencv-python yacs
-
-export TORCH_CUDA_ARCH_LIST="12.0"
-pip install --no-build-isolation .
-
-# Optional: Pangolin + DPViewer
-sudo apt-get install libglew-dev libpython3-dev libeigen3-dev libgl1-mesa-dev \
-    libwayland-dev libxkbcommon-dev wayland-protocols libepoxy-dev
-
-git clone https://github.com/stevenlovegrove/Pangolin.git
-cd Pangolin
-rm -rf build && mkdir build && cd build
-cmake .. -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1"
-make -j$(nproc) && sudo make install && sudo ldconfig
-cd ../..
-
-# Verify Pangolin ABI (should show std::__cxx11::basic_string)
-nm -DC /usr/local/lib/libpango_display.so | grep "CreateWindowAndBind"
-
-rm -rf DPViewer/build DPViewer/*.egg-info
-pip install --no-build-isolation ./DPViewer
-
-# Verify DPViewer
-python -c "from dpviewerx import Viewer; print('DPViewer OK')"
 ```
