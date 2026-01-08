@@ -16,6 +16,10 @@ from .augmentation import RGBDAugmentor
 from .rgbd_utils import *
 
 class RGBDDataset(data.Dataset):
+    # Subclasses should define these
+    DEPTH_SCALE = 1.0
+    CACHE_NAME = None  # e.g., 'TartanAir', 'Redwood'
+
     def __init__(self, name, datapath, n_frames=4, crop_size=[480,640], fmin=10.0, fmax=75.0, aug=True, sample=True):
         """ Base class for RGBD dataset """
         self.aug = None
@@ -28,19 +32,39 @@ class RGBDDataset(data.Dataset):
         self.n_frames = n_frames
         self.fmin = fmin # exclude very easy examples
         self.fmax = fmax # exclude very hard examples
-        
+
         if self.aug:
             self.aug = RGBDAugmentor(crop_size=crop_size)
 
         # building dataset is expensive, cache so only needs to be performed once
         cur_path = osp.dirname(osp.abspath(__file__))
-        if not os.path.isdir(osp.join(cur_path, 'cache')):
-            os.mkdir(osp.join(cur_path, 'cache'))
-        
-        self.scene_info = \
-            pickle.load(open('datasets/TartanAir.pickle', 'rb'))[0]
+        cache_dir = osp.join(cur_path, 'cache')
+        if not os.path.isdir(cache_dir):
+            os.mkdir(cache_dir)
+
+        # Load or build scene_info
+        self.scene_info = self._load_or_build_scene_info(cache_dir)
 
         self._build_dataset_index()
+
+    def _load_or_build_scene_info(self, cache_dir):
+        """Load scene_info from cache or build it. Subclasses can override."""
+        cache_name = self.__class__.CACHE_NAME or self.name
+        cache_path = osp.join(cache_dir, f'{cache_name}.pickle')
+
+        if osp.isfile(cache_path):
+            print(f"Loading {cache_name} from cache: {cache_path}")
+            return pickle.load(open(cache_path, 'rb'))
+        else:
+            print(f"Building {cache_name} dataset (this may take a while)...")
+            scene_info = self._build_dataset()
+            pickle.dump(scene_info, open(cache_path, 'wb'))
+            print(f"Saved cache to: {cache_path}")
+            return scene_info
+
+    def _build_dataset(self):
+        """Build scene_info dictionary. Must be implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement _build_dataset()")
                 
     def _build_dataset_index(self):
         self.dataset_index = []

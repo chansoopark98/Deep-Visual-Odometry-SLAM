@@ -1,3 +1,8 @@
+# Ignore directories
+.claude/
+datasets/
+runs/
+
 # Ignore files
 *.zip
 

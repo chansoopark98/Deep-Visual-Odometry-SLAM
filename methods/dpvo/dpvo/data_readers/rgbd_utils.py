@@ -2,7 +2,10 @@ import numpy as np
 import os.path as osp
 
 import torch
+from tqdm import tqdm
 from ..lietorch import SE3
+# Use DROID-SLAM projective_ops for induced_flow (used in pickle building)
+from .. import projective_ops as pops
 
 from scipy.spatial.transform import Rotation
 
@@ -119,7 +122,8 @@ def compute_distance_matrix_flow(poses, disps, intrinsics):
     matrix = np.zeros((N, N), dtype=np.float32)
 
     s = 2048
-    for i in range(0, ii.shape[0], s):
+    total_batches = (ii.shape[0] + s - 1) // s
+    for i in tqdm(range(0, ii.shape[0], s), total=total_batches, desc="Computing flow", leave=False):
         flow1, val1 = pops.induced_flow(poses, disps, intrinsics, ii[i:i+s], jj[i:i+s])
         flow2, val2 = pops.induced_flow(poses, disps, intrinsics, jj[i:i+s], ii[i:i+s])
         

@@ -1,0 +1,66 @@
+# DPVO Training Configuration
+# ============================
+
+# Dataset Configuration
+dataset:
+  # Dataset type: 'tartan' or 'redwood'
+  type: redwood
+
+  # Dataset paths for each type
+  paths:
+    tartan: datasets/TartanAir
+    redwood: datasets/redwood
+
+  # Redwood-specific settings
+  redwood:
+    mode: validation  # 'train', 'validation', or 'test'
+
+# Training Hyperparameters
+training:
+  # Experiment name (used for checkpoint naming)
+  name: dpvo
+
+  # Resume from checkpoint (null or path to checkpoint)
+  ckpt: null
+
+  # Total training steps
+  steps: 240000
+
+  # Learning rate
+  lr: 0.00008
+
+  # Gradient clipping threshold
+  clip: 10.0
+
+  # Weight decay for optimizer
+  weight_decay: 1.0e-6
+
+  # Checkpoint save frequency (steps)
+  save_freq: 10000
+
+# Model Configuration
+model:
+  # Number of frames per training sample
+  n_frames: 15
+
+  # Number of patches per frame
+  M: 1024
+
+  # Number of update steps
+  STEPS: 18
+
+# Loss Weights
+loss:
+  # Pose loss weight
+  pose_weight: 10.0
+
+  # Optical flow loss weight
+  flow_weight: 0.1
+
+# DataLoader Configuration
+dataloader:
+  # Batch size
+  batch_size: 32
+
+  # Number of data loading workers
+  num_workers: 16

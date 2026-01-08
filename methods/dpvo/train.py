@@ -1,6 +1,7 @@
 import cv2
 import os
 import argparse
+import yaml
 import numpy as np
 from collections import OrderedDict
 
@@ -16,6 +17,43 @@ import torch.nn.functional as F
 
 from dpvo.net import VONet
 from evaluate_tartan import evaluate as validate
+
+
+def load_config(config_path):
+    """Load configuration from YAML file and return as namespace."""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    args = argparse.Namespace()
+
+    # Dataset configuration
+    args.dataset_type = config['dataset']['type']
+    args.datapath = config['dataset']['paths'].get(args.dataset_type)
+    args.redwood_mode = config['dataset']['redwood'].get('mode', 'train')
+
+    # Training hyperparameters
+    args.name = config['training'].get('name', 'dpvo')
+    args.ckpt = config['training'].get('ckpt')
+    args.steps = config['training'].get('steps', 240000)
+    args.lr = config['training'].get('lr', 0.00008)
+    args.clip = config['training'].get('clip', 10.0)
+    args.weight_decay = config['training'].get('weight_decay', 1e-6)
+    args.save_freq = config['training'].get('save_freq', 10000)
+
+    # Model configuration
+    args.n_frames = config['model'].get('n_frames', 15)
+    args.M = config['model'].get('M', 1024)
+    args.STEPS = config['model'].get('STEPS', 18)
+
+    # Loss weights
+    args.pose_weight = config['loss'].get('pose_weight', 10.0)
+    args.flow_weight = config['loss'].get('flow_weight', 0.1)
+
+    # DataLoader configuration
+    args.batch_size = config['dataloader'].get('batch_size', 1)
+    args.num_workers = config['dataloader'].get('num_workers', 4)
+
+    return args
 
 
 def show_image(image):
@@ -47,8 +85,39 @@ def train(args):
     # legacy ddp code
     rank = 0
 
-    db = dataset_factory(['tartan'], datapath="datasets/TartanAir", n_frames=args.n_frames)
-    train_loader = DataLoader(db, batch_size=1, shuffle=True, num_workers=4)
+    # Print configuration
+    print("=" * 60)
+    print("Training Configuration")
+    print("=" * 60)
+    print(f"  Dataset: {args.dataset_type}")
+    print(f"  Datapath: {args.datapath}")
+    if args.dataset_type == 'redwood':
+        print(f"  Redwood mode: {args.redwood_mode}")
+    print(f"  Steps: {args.steps}")
+    print(f"  Learning rate: {args.lr}")
+    print(f"  N frames: {args.n_frames}")
+    print(f"  Batch size: {args.batch_size}")
+    print(f"  Pose weight: {args.pose_weight}")
+    print(f"  Flow weight: {args.flow_weight}")
+    print("=" * 60)
+
+    # Build dataset based on configuration
+    dataset_kwargs = {
+        'datapath': args.datapath,
+        'n_frames': args.n_frames,
+    }
+
+    # Add mode for redwood dataset
+    if args.dataset_type == 'redwood':
+        dataset_kwargs['mode'] = args.redwood_mode
+
+    db = dataset_factory([args.dataset_type], **dataset_kwargs)
+    train_loader = DataLoader(
+        db,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers
+    )
 
     net = VONet()
     net.train()
@@ -61,7 +130,7 @@ def train(args):
             new_state_dict[k.replace('module.', '')] = v
         net.load_state_dict(new_state_dict, strict=False)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-6)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
         args.lr, args.steps, pct_start=0.01, cycle_momentum=False, anneal_strategy='linear')
@@ -80,7 +149,7 @@ def train(args):
             so = total_steps < 1000 and args.ckpt is None
 
             poses = SE3(poses).inv()
-            traj = net(images, poses, disps, intrinsics, M=1024, STEPS=18, structure_only=so)
+            traj = net(images, poses, disps, intrinsics, M=args.M, STEPS=args.STEPS, structure_only=so)
 
             loss = 0.0
             for i, (v, x, y, P1, P2, kl) in enumerate(traj):
@@ -141,10 +210,11 @@ def train(args):
             if rank == 0:
                 logger.push(metrics)
 
-            if total_steps % 10000 == 0:
+            if total_steps % args.save_freq == 0:
                 torch.cuda.empty_cache()
 
                 if rank == 0:
+                    os.makedirs('checkpoints', exist_ok=True)
                     PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
                     torch.save(net.state_dict(), PATH)
 
@@ -157,15 +227,14 @@ def train(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--name', default='bla', help='name your experiment')
-    parser.add_argument('--ckpt', help='checkpoint to restore')
-    parser.add_argument('--steps', type=int, default=240000)
-    parser.add_argument('--lr', type=float, default=0.00008)
-    parser.add_argument('--clip', type=float, default=10.0)
-    parser.add_argument('--n_frames', type=int, default=15)
-    parser.add_argument('--pose_weight', type=float, default=10.0)
-    parser.add_argument('--flow_weight', type=float, default=0.1)
-    args = parser.parse_args()
+    import sys
+
+    # Get config path from command line (optional)
+    config_path = 'config.yaml'
+    if len(sys.argv) > 1:
+        config_path = sys.argv[1]
+
+    # Load all settings from config
+    args = load_config(config_path)
 
     train(args)

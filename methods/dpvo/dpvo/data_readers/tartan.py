@@ -54,10 +54,10 @@ class TartanAir(RGBDDataset):
 
     # scale depths to balance rot & trans
     DEPTH_SCALE = 5.0
+    CACHE_NAME = 'TartanAir'
 
     def __init__(self, mode='training', **kwargs):
         self.mode = mode
-        self.n_frames = 2
         super(TartanAir, self).__init__(name='TartanAir', **kwargs)
 
     @staticmethod 
