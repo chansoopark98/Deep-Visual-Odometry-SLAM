@@ -1,155 +1,133 @@
-import cv2
 import os
-import argparse
+import sys
 import yaml
-import numpy as np
 from collections import OrderedDict
 
-import matplotlib.pyplot as plt
 import torch
-import torch.optim as optim
 from torch.utils.data import DataLoader
 from dpvo.data_readers.factory import dataset_factory
 
 from dpvo.lietorch import SE3
 from dpvo.logger import Logger
-import torch.nn.functional as F
-
 from dpvo.net import VONet
-from evaluate_tartan import evaluate as validate
+from utils.utils import kabsch_umeyama
 
 
 def load_config(config_path):
-    """Load configuration from YAML file and return as namespace."""
+    """Load configuration from YAML file."""
     with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    args = argparse.Namespace()
-
-    # Dataset configuration
-    args.dataset_type = config['dataset']['type']
-    args.datapath = config['dataset']['paths'].get(args.dataset_type)
-    args.redwood_mode = config['dataset']['redwood'].get('mode', 'train')
-
-    # Training hyperparameters
-    args.name = config['training'].get('name', 'dpvo')
-    args.ckpt = config['training'].get('ckpt')
-    args.steps = config['training'].get('steps', 240000)
-    args.lr = config['training'].get('lr', 0.00008)
-    args.clip = config['training'].get('clip', 10.0)
-    args.weight_decay = config['training'].get('weight_decay', 1e-6)
-    args.save_freq = config['training'].get('save_freq', 10000)
-
-    # Model configuration
-    args.n_frames = config['model'].get('n_frames', 15)
-    args.M = config['model'].get('M', 1024)
-    args.STEPS = config['model'].get('STEPS', 18)
-
-    # Loss weights
-    args.pose_weight = config['loss'].get('pose_weight', 10.0)
-    args.flow_weight = config['loss'].get('flow_weight', 0.1)
-
-    # DataLoader configuration
-    args.batch_size = config['dataloader'].get('batch_size', 1)
-    args.num_workers = config['dataloader'].get('num_workers', 4)
-
-    return args
+        return yaml.safe_load(f)
 
 
-def show_image(image):
-    image = image.permute(1, 2, 0).cpu().numpy()
-    cv2.imshow('image', image / 255.0)
-    cv2.waitKey()
+def train(config):
+    """Main training loop."""
 
-def image2gray(image):
-    image = image.mean(dim=0).cpu().numpy()
-    cv2.imshow('image', image / 255.0)
-    cv2.waitKey()
+    # Find active dataset
+    dataset_type = None
+    for name in ['tartan', 'redwood']:
+        if config['dataset'].get(name, {}).get('use', False):
+            dataset_type = name
+            break
 
-def kabsch_umeyama(A, B):
-    n, m = A.shape
-    EA = torch.mean(A, axis=0)
-    EB = torch.mean(B, axis=0)
-    VarA = torch.mean((A - EA).norm(dim=1)**2)
-
-    H = ((A - EA).T @ (B - EB)) / n
-    U, D, VT = torch.svd(H)
-
-    c = VarA / torch.trace(torch.diag(D))
-    return c
-
-
-def train(args):
-    """ main training loop """
-
-    # legacy ddp code
-    rank = 0
+    if dataset_type is None:
+        raise ValueError("No dataset enabled. Set 'use: true' for at least one dataset.")
 
     # Print configuration
     print("=" * 60)
     print("Training Configuration")
     print("=" * 60)
-    print(f"  Dataset: {args.dataset_type}")
-    print(f"  Datapath: {args.datapath}")
-    if args.dataset_type == 'redwood':
-        print(f"  Redwood mode: {args.redwood_mode}")
-    print(f"  Steps: {args.steps}")
-    print(f"  Learning rate: {args.lr}")
-    print(f"  N frames: {args.n_frames}")
-    print(f"  Batch size: {args.batch_size}")
-    print(f"  Pose weight: {args.pose_weight}")
-    print(f"  Flow weight: {args.flow_weight}")
+    print(f"  Dataset: {dataset_type}")
+    print(f"  Datapath: {config['dataset'][dataset_type]['path']}")
+    print(f"  Mode: {config['dataset'][dataset_type].get('mode', 'train')}")
+    print(f"  Steps: {config['training'].get('steps', 240000)}")
+    print(f"  Learning rate: {config['training'].get('lr', 0.00008)}")
+    print(f"  Scheduler: {config.get('scheduler', {}).get('type', 'onecycle')}")
+    print(f"  N frames: {config['model'].get('n_frames', 15)}")
+    print(f"  Batch size: {config['dataloader'].get('batch_size', 1)}")
+    print(f"  Pose weight: {config['loss'].get('pose_weight', 10.0)}")
+    print(f"  Flow weight: {config['loss'].get('flow_weight', 0.1)}")
     print("=" * 60)
 
-    # Build dataset based on configuration
-    dataset_kwargs = {
-        'datapath': args.datapath,
-        'n_frames': args.n_frames,
-    }
-
-    # Add mode for redwood dataset
-    if args.dataset_type == 'redwood':
-        dataset_kwargs['mode'] = args.redwood_mode
-
-    db = dataset_factory([args.dataset_type], **dataset_kwargs)
+    # Build dataset
+    db = dataset_factory(
+        [dataset_type],
+        datapath=config['dataset'][dataset_type]['path'],
+        n_frames=config['model'].get('n_frames', 15),
+        mode=config['dataset'][dataset_type].get('mode', 'train')
+    )
     train_loader = DataLoader(
         db,
-        batch_size=args.batch_size,
+        batch_size=config['dataloader'].get('batch_size', 1),
         shuffle=True,
-        num_workers=args.num_workers
+        num_workers=config['dataloader'].get('num_workers', 4)
     )
 
+    # Model
     net = VONet()
     net.train()
     net.cuda()
 
-    if args.ckpt is not None:
-        state_dict = torch.load(args.ckpt)
+    ckpt = config['training'].get('ckpt')
+    if ckpt is not None:
+        state_dict = torch.load(ckpt)
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
             new_state_dict[k.replace('module.', '')] = v
         net.load_state_dict(new_state_dict, strict=False)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # Optimizer & Scheduler
+    lr = config['training'].get('lr', 0.00008)
+    steps = config['training'].get('steps', 240000)
+    weight_decay = config['training'].get('weight_decay', 1e-6)
 
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-        args.lr, args.steps, pct_start=0.01, cycle_momentum=False, anneal_strategy='linear')
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=weight_decay)
 
-    if rank == 0:
-        logger = Logger(args.name, scheduler)
+    scheduler_type = config.get('scheduler', {}).get('type', 'onecycle')
+    if scheduler_type == 'onecycle':
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, lr, steps,
+            pct_start=config.get('scheduler', {}).get('pct_start', 0.01),
+            cycle_momentum=False, anneal_strategy='linear'
+        )
+    elif scheduler_type == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=steps,
+            eta_min=config.get('scheduler', {}).get('eta_min', 1e-7)
+        )
+    elif scheduler_type == 'step':
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=config.get('scheduler', {}).get('step_size', steps // 3),
+            gamma=config.get('scheduler', {}).get('gamma', 0.1)
+        )
+    elif scheduler_type == 'constant':
+        scheduler = torch.optim.lr_scheduler.ConstantLR(
+            optimizer, factor=1.0, total_iters=steps
+        )
+    else:
+        raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
+    logger = Logger(config['training'].get('name', 'dpvo'), scheduler)
+
+    # Training loop
     total_steps = 0
+    flow_weight = config['loss'].get('flow_weight', 0.1)
+    pose_weight = config['loss'].get('pose_weight', 10.0)
+    clip = config['training'].get('clip', 10.0)
+    save_freq = config['training'].get('save_freq', 10000)
+    M = config['model'].get('M', 1024)
+    STEPS = config['model'].get('STEPS', 18)
 
-    while 1:
+    while True:
         for data_blob in train_loader:
             images, poses, disps, intrinsics = [x.cuda().float() for x in data_blob]
             optimizer.zero_grad()
 
-            # fix poses to gt for first 1k steps
-            so = total_steps < 1000 and args.ckpt is None
+            # Fix poses to GT for first 1k steps
+            so = total_steps < 1000 and ckpt is None
 
             poses = SE3(poses).inv()
-            traj = net(images, poses, disps, intrinsics, M=args.M, STEPS=args.STEPS, structure_only=so)
+            traj = net(images, poses, disps, intrinsics, M=M, STEPS=STEPS, structure_only=so)
 
             loss = 0.0
             for i, (v, x, y, P1, P2, kl) in enumerate(traj):
@@ -157,7 +135,7 @@ def train(args):
                 e = e.reshape(-1, net.P**2)[(v > 0.5).reshape(-1)].min(dim=-1).values
 
                 N = P1.shape[1]
-                ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N))
+                ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N), indexing='ij')
                 ii = ii.reshape(-1).cuda()
                 jj = jj.reshape(-1).cuda()
 
@@ -181,15 +159,14 @@ def train(args):
                 tr = e1[...,0:3].norm(dim=-1)
                 ro = e1[...,3:6].norm(dim=-1)
 
-                loss += args.flow_weight * e.mean()
+                loss += flow_weight * e.mean()
                 if not so and i >= 2:
-                    loss += args.pose_weight * ( tr.mean() + ro.mean() )
+                    loss += pose_weight * (tr.mean() + ro.mean())
 
-            # kl is 0 (not longer used)
             loss += kl
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(net.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm_(net.parameters(), clip)
             optimizer.step()
             scheduler.step()
 
@@ -207,30 +184,21 @@ def train(args):
                 "t2": (tr < .01).float().mean().item(),
             }
 
-            if rank == 0:
-                logger.push(metrics)
+            logger.push(metrics)
 
-            if total_steps % args.save_freq == 0:
+            if total_steps % save_freq == 0:
                 torch.cuda.empty_cache()
-
-                if rank == 0:
-                    os.makedirs('checkpoints', exist_ok=True)
-                    PATH = 'checkpoints/%s_%06d.pth' % (args.name, total_steps)
-                    torch.save(net.state_dict(), PATH)
-
+                os.makedirs('checkpoints', exist_ok=True)
+                PATH = 'checkpoints/%s_%06d.pth' % (config['training'].get('name', 'dpvo'), total_steps)
+                torch.save(net.state_dict(), PATH)
                 torch.cuda.empty_cache()
                 net.train()
 
 
 if __name__ == '__main__':
-    import sys
-
-    # Get config path from command line (optional)
     config_path = 'config.yaml'
     if len(sys.argv) > 1:
         config_path = sys.argv[1]
 
-    # Load all settings from config
-    args = load_config(config_path)
-
-    train(args)
+    config = load_config(config_path)
+    train(config)

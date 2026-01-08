@@ -1,0 +1,56 @@
+# DPVO Training Configuration (Redwood - Fine-tuning)
+# ====================================================
+
+# Dataset Configuration
+dataset:
+  tartan:
+    use: false
+    path: datasets/TartanAir
+    mode: train
+
+  redwood:
+    use: true
+    path: datasets/redwood
+    mode: train
+
+# Training Hyperparameters (Fine-tuning)
+training:
+  name: dpvo_redwood_ft  # Experiment name (used for checkpoint naming)
+  ckpt: ./methods/dpvo/dpvo.pth  # Pre-trained checkpoint (TartanAir 240k steps)
+  steps: 240000  # Total training steps (shorter for fine-tuning)
+  lr: 0.00008  # Learning rate (1/10 of scratch training)
+  clip: 10.0  # Gradient clipping threshold
+  weight_decay: 1.0e-6  # Weight decay for optimizer
+  save_freq: 10000  # Checkpoint save frequency (steps)
+
+# Scheduler Configuration (Fine-tuning)
+scheduler:
+  # type: cosine  # 'onecycle', 'cosine', 'step', 'constant'
+  # pct_start: 0.01  # Warmup percentage (onecycle only)
+  # eta_min: 1.0e-8  # Minimum lr (cosine only)
+  # step_size: 15000  # Step size for lr decay (step only)
+  # gamma: 0.1  # Decay factor (step only)
+  type: onecycle  # 'onecycle', 'cosine', 'step', 'constant'
+  # OneCycleLR options
+  pct_start: 0.01  # Warmup percentage (onecycle only)
+  # CosineAnnealingLR options
+  eta_min: 1.0e-7  # Minimum lr (cosine only)
+  # StepLR options
+  step_size: 80000  # Step size for lr decay (step only)
+  gamma: 0.1  # Decay factor (step only)
+
+# Model Configuration
+model:
+  n_frames: 15  # Number of frames per training sample
+  M: 1024  # Number of patches per frame
+  STEPS: 18  # Number of update steps
+
+# Loss Weights
+loss:
+  pose_weight: 10.0  # Pose loss weight
+  flow_weight: 0.1  # Optical flow loss weight
+
+# DataLoader Configuration
+dataloader:
+  batch_size: 1  # Batch size
+  num_workers: 8  # Number of data loading workers
