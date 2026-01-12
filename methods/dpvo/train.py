@@ -186,6 +186,10 @@ def train(config):
 
             logger.push(metrics)
 
+            # Periodic memory cleanup to prevent fragmentation
+            if total_steps % 1000 == 0:
+                torch.cuda.empty_cache()
+
             if total_steps % save_freq == 0:
                 torch.cuda.empty_cache()
                 os.makedirs('checkpoints', exist_ok=True)

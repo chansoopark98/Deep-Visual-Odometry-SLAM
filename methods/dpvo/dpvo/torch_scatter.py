@@ -48,6 +48,9 @@ def scatter_sum(
     if dim < 0:
         dim = src.dim() + dim
 
+    # Ensure index is int64 for scatter operations
+    index = index.to(torch.int64)
+
     # Expand index to match src dimensions if needed
     if index.dim() < src.dim():
         # Create shape for view: [1, ..., index_size, ..., 1]
@@ -94,6 +97,9 @@ def scatter_softmax(
     if dim < 0:
         dim = src.dim() + dim
 
+    # Ensure index is int64 for scatter operations
+    index = index.to(torch.int64)
+
     # Expand index to match src dimensions if needed
     if index.dim() < src.dim():
         expand_shape = [1] * src.dim()
@@ -118,8 +124,8 @@ def scatter_softmax(
     # Compute exp
     exp_src = torch.exp(src_shifted)
 
-    # Sum exp per group
-    sum_exp = torch.zeros(shape, dtype=src.dtype, device=src.device)
+    # Sum exp per group (ensure same dtype as exp_src)
+    sum_exp = torch.zeros(shape, dtype=exp_src.dtype, device=src.device)
     sum_exp.scatter_add_(dim, index, exp_src)
 
     # Normalize
@@ -153,6 +159,9 @@ def scatter_max(
     # Handle negative dim
     if dim < 0:
         dim = src.dim() + dim
+
+    # Ensure index is int64 for scatter operations
+    index = index.to(torch.int64)
 
     # Expand index to match src dimensions if needed
     if index.dim() < src.dim():
@@ -237,6 +246,9 @@ def scatter_mean(
     if dim < 0:
         dim = src.dim() + dim
 
+    # Ensure index is int64 for scatter operations
+    index = index.to(torch.int64)
+
     # Expand index to match src dimensions if needed
     if index.dim() < src.dim():
         expand_shape = [1] * src.dim()
@@ -282,3 +294,4 @@ __all__ = [
     'scatter_max',
     'scatter_mean',
 ]
+ 

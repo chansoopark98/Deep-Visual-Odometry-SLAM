@@ -14,6 +14,15 @@ from dpvo.plot_utils import plot_trajectory, save_output_for_COLMAP, save_ply
 from dpvo.stream import image_stream, video_stream
 from dpvo.utils import Timer
 
+"""
+Running CLI
+# Redwood dataset
+    python methods/dpvo/demo.py --network checkpoints/dpvo_redwood_ft_230000.pth \
+            --imagedir datasets/redwood/train/apartment/image/ \
+            --calib methods/dpvo/calib/redwood.txt \
+            --config methods/dpvo/config/default.yaml \
+            --viz 
+"""
 SKIP = 0
 
 def show_image(image, t=0):
