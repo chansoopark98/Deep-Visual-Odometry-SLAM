@@ -54,7 +54,11 @@ class RGBDDataset(data.Dataset):
 
         if osp.isfile(cache_path):
             print(f"Loading {cache_name} from cache: {cache_path}")
-            return pickle.load(open(cache_path, 'rb'))
+            data = pickle.load(open(cache_path, 'rb'))
+            # Handle legacy format where data is wrapped in a tuple
+            if isinstance(data, tuple) and len(data) == 1:
+                data = data[0]
+            return data
         else:
             print(f"Building {cache_name} dataset (this may take a while)...")
             scene_info = self._build_dataset()

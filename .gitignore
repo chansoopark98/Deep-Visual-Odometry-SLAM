@@ -6,6 +6,7 @@ runs/
 # Ignore files
 *.zip
 *.pth
+*.pickle
 
 # modules/DBoW2/
 # modules/DPRetrieval/
