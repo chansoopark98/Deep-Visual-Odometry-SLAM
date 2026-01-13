@@ -5,6 +5,8 @@ class CorrLayer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, fmap1, fmap2, coords, ii, jj, radius, dropout):
         """ forward correlation """
+        # coords must always be float32 for CUDA kernel
+        coords = coords.float()
         ctx.save_for_backward(fmap1, fmap2, coords, ii, jj)
         ctx.radius = radius
         ctx.dropout = dropout
@@ -34,9 +36,11 @@ class PatchLayer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, net, coords, radius):
         """ forward patchify """
+        # coords must always be float32 for CUDA kernel
+        coords = coords.float()
         ctx.radius = radius
         ctx.save_for_backward(net, coords)
-        
+
         patches, = cuda_corr.patchify_forward(net, coords, radius)
         return patches
 
@@ -50,11 +54,13 @@ class PatchLayer(torch.autograd.Function):
 
 def patchify(net, coords, radius, mode='bilinear'):
     """ extract patches """
+    # coords must be float32 for CUDA kernel
+    coords = coords.float()
 
     patches = PatchLayer.apply(net, coords, radius)
 
     if mode == 'bilinear':
-        offset = (coords - coords.floor()).to(net.device)
+        offset = (coords - coords.floor()).to(net.dtype).to(net.device)
         dx, dy = offset[:,:,None,None,None].unbind(dim=-1)
 
         d = 2 * radius + 1
@@ -69,6 +75,8 @@ def patchify(net, coords, radius, mode='bilinear'):
     
 
 def corr(fmap1, fmap2, coords, ii, jj, radius=1, dropout=1):
+    # coords must be float32 for CUDA kernel
+    coords = coords.float()
     return CorrLayer.apply(fmap1, fmap2, coords, ii, jj, radius, dropout)
 
 

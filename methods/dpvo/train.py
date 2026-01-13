@@ -144,13 +144,10 @@ def train(config):
             poses = SE3(poses).inv()
 
             with torch.amp.autocast('cuda', enabled=use_amp):
-                start = time.time()                
                 traj = net(images, poses, disps, intrinsics, M=M, STEPS=STEPS, structure_only=so)
-                print(f"Forward time: {time.time() - start:.3f}s")
 
                 loss = 0.0
                 for i, (v, x, y, P1, P2, kl) in enumerate(traj):
-                    start = time.time()
                     e = (x - y).norm(dim=-1)
                     e = e.reshape(-1, net.P**2)[(v > 0.5).reshape(-1)].min(dim=-1).values
 
@@ -182,8 +179,6 @@ def train(config):
                     loss += flow_weight * e.mean()
                     if not so and i >= 2:
                         loss += pose_weight * (tr.mean() + ro.mean())
-
-                    print(f"Loss calc time: {time.time() - start:.3f}s")
 
                 loss += kl
 
