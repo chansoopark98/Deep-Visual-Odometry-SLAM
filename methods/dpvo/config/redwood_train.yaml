@@ -22,6 +22,7 @@ training:
   clip: 10.0  # Gradient clipping threshold
   weight_decay: 1.0e-6  # Weight decay for optimizer
   save_freq: 10000  # Checkpoint save frequency (steps)
+  amp: true  # Automatic Mixed Precision (FP16)
 
 # Scheduler Configuration (Fine-tuning)
 scheduler:

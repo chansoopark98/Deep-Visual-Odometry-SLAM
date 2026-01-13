@@ -1,5 +1,6 @@
 #include <torch/extension.h>
-#include <THC/THCAtomics.cuh>
+#include <ATen/cuda/Atomic.cuh>
+#include <cuda_fp16.h>
 #include <vector>
 #include <iostream>
 
@@ -74,7 +75,7 @@ __global__ void patchify_backward_kernel(int R,
 
     if (within_bounds(i, j, H, W)) {
       for (int k=0; k<C; k++)
-        atomicAdd(&gradient[n][k][i][j], patch_gradient[n][m][k][ii][jj]);
+        gpuAtomicAdd(&gradient[n][k][i][j], patch_gradient[n][m][k][ii][jj]);
     }
   }
 }
@@ -118,20 +119,20 @@ __global__ void corr_forward_kernel(int R,
     const int i1 = static_cast<int>(floor(y)) + (ii - R);
     const int j1 = static_cast<int>(floor(x)) + (jj - R);
 
-    scalar_t s = 0;
+    float s = 0;  // Accumulate in float for numerical stability
     if (within_bounds(i1, j1, H2, W2)) {
 
       #pragma unroll 8
       for (int i=0; i<C; i+=8) {
-        scalar_t f1[8]; for (int j=0; j<8; j++) f1[j] = fmap1[n][ix][i+j][i0][j0];
-        scalar_t f2[8]; for (int j=0; j<8; j++) f2[j] = fmap2[n][jx][i+j][i1][j1];
+        float f1[8]; for (int j=0; j<8; j++) f1[j] = static_cast<float>(fmap1[n][ix][i+j][i0][j0]);
+        float f2[8]; for (int j=0; j<8; j++) f2[j] = static_cast<float>(fmap2[n][jx][i+j][i1][j1]);
 
         #pragma unroll
         for (int j=0; j<8; j++) s += f1[j] * f2[j];
       }
     }
 
-    corr[n][m][ii][jj][i0][j0] = s;
+    corr[n][m][ii][jj][i0][j0] = static_cast<scalar_t>(s);
   }
 }
 
@@ -143,7 +144,7 @@ __global__ void corr_backward_kernel(int R,
     const torch::PackedTensorAccessor32<float,5,torch::RestrictPtrTraits> coords,
     const torch::PackedTensorAccessor32<long,1,torch::RestrictPtrTraits> us,
     const torch::PackedTensorAccessor32<long,1,torch::RestrictPtrTraits> vs,
-    const torch::PackedTensorAccessor32<float,6,torch::RestrictPtrTraits> corr_grad,
+    const torch::PackedTensorAccessor32<scalar_t,6,torch::RestrictPtrTraits> corr_grad,
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> fmap1_grad,
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> fmap2_grad)
 {
@@ -177,13 +178,13 @@ __global__ void corr_backward_kernel(int R,
     const int i1 = static_cast<int>(floor(y)) + (ii - R);
     const int j1 = static_cast<int>(floor(x)) + (jj - R);
 
-    const scalar_t g = (scalar_t) corr_grad[n][m][ii][jj][i0][j0];
+    const scalar_t g = corr_grad[n][m][ii][jj][i0][j0];
 
     if (within_bounds(i1, j1, H2, W2)) {
       #pragma unroll 32
       for (int i=0; i<C; i++) {
-        atomicAdd(&fmap1_grad[n][ix][i][i0][j0], g * fmap2[n][jx][i][i1][j1]);
-        atomicAdd(&fmap2_grad[n][jx][i][i1][j1], g * fmap1[n][ix][i][i0][j0]);
+        gpuAtomicAdd(&fmap1_grad[n][ix][i][i0][j0], g * fmap2[n][jx][i][i1][j1]);
+        gpuAtomicAdd(&fmap2_grad[n][jx][i][i1][j1], g * fmap1[n][ix][i][i0][j0]);
       }
     }
   }
@@ -248,21 +249,21 @@ std::vector<torch::Tensor> corr_cuda_backward(
   const int H = coords.size(3);
   const int W = coords.size(4);
   const int D = 2 * radius + 2;
-   
+
   grad = grad.permute({0,1,3,2,4,5}).contiguous();
   torch::Tensor x = coords.index({Slice(), Slice(), 0, None, None});
   torch::Tensor y = coords.index({Slice(), Slice(), 1, None, None});
-  torch::Tensor dx = x - x.floor();
-  torch::Tensor dy = y - y.floor();
+  torch::Tensor dx = x - x.floor(); dx = dx.to(fmap1.dtype());
+  torch::Tensor dy = y - y.floor(); dy = dy.to(fmap1.dtype());
 
-  auto opts = torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA);
-  torch::Tensor g1 = torch::zeros({B, M, D, D, H, W}, grad.options());
-  torch::Tensor g2 = torch::zeros({B, M, D, D, H, W}, grad.options());
-  torch::Tensor g3 = torch::zeros({B, M, D, D, H, W}, grad.options());
-  torch::Tensor g4 = torch::zeros({B, M, D, D, H, W}, grad.options());
-  
+  auto opts = fmap1.options();
+  torch::Tensor g1 = torch::zeros({B, M, D, D, H, W}, opts);
+  torch::Tensor g2 = torch::zeros({B, M, D, D, H, W}, opts);
+  torch::Tensor g3 = torch::zeros({B, M, D, D, H, W}, opts);
+  torch::Tensor g4 = torch::zeros({B, M, D, D, H, W}, opts);
+
   g1.index_put_({Slice(), Slice(), Slice(0, D-1), Slice(0, D-1)}, (1 - dx) * (1 - dy) * grad);
-  g2.index_put_({Slice(), Slice(), Slice(0, D-1), Slice(1, D-0)},     (dx) * (1 - dy) * grad); 
+  g2.index_put_({Slice(), Slice(), Slice(0, D-1), Slice(1, D-0)},     (dx) * (1 - dy) * grad);
   g3.index_put_({Slice(), Slice(), Slice(1, D-0), Slice(0, D-1)}, (1 - dx) *     (dy) * grad);
   g4.index_put_({Slice(), Slice(), Slice(1, D-0), Slice(1, D-0)},     (dx) *     (dy) * grad);
 
@@ -277,7 +278,7 @@ std::vector<torch::Tensor> corr_cuda_backward(
       coords.packed_accessor32<float,5,torch::RestrictPtrTraits>(),
       ii.packed_accessor32<long,1,torch::RestrictPtrTraits>(),
       jj.packed_accessor32<long,1,torch::RestrictPtrTraits>(),
-      corr_grad.packed_accessor32<float,6,torch::RestrictPtrTraits>(),
+      corr_grad.packed_accessor32<scalar_t,6,torch::RestrictPtrTraits>(),
       fmap1_grad.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
       fmap2_grad.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>());
   }));
@@ -319,9 +320,9 @@ std::vector<torch::Tensor> patchify_cuda_backward(
   const int H = net.size(2);
   const int W = net.size(3);
   const int D = 2 * radius + 2;
-  
+
   torch::Tensor net_gradient = torch::zeros_like(net);
-  
+
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(net.scalar_type(), "patchify_backward_kernel", ([&] {
     patchify_backward_kernel<scalar_t><<<BLOCKS(B * M * D * D), THREADS>>>(radius,
       gradient.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),

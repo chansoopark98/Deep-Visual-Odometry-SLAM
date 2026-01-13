@@ -1,5 +1,6 @@
 import os
 import sys
+from matplotlib.pylab import f
 import yaml
 from collections import OrderedDict
 
@@ -12,6 +13,8 @@ from dpvo.logger import Logger
 from dpvo.net import VONet
 from utils.utils import kabsch_umeyama
 
+# test
+import time
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -31,6 +34,9 @@ def train(config):
     if not active_datasets:
         raise ValueError("No dataset enabled. Set 'use: true' for at least one dataset.")
 
+    # AMP configuration
+    use_amp = config['training'].get('amp', False)
+
     # Print configuration
     print("=" * 60)
     print("Training Configuration")
@@ -41,6 +47,7 @@ def train(config):
     print(f"  Steps: {config['training'].get('steps', 240000)}")
     print(f"  Learning rate: {config['training'].get('lr', 0.00008)}")
     print(f"  Scheduler: {config.get('scheduler', {}).get('type', 'onecycle')}")
+    print(f"  AMP: {use_amp}")
     print(f"  N frames: {config['model'].get('n_frames', 15)}")
     print(f"  Batch size: {config['dataloader'].get('batch_size', 1)}")
     print(f"  Pose weight: {config['loss'].get('pose_weight', 10.0)}")
@@ -112,6 +119,9 @@ def train(config):
     else:
         raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
+    # AMP GradScaler
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+
     logger = Logger(config['training'].get('name', 'dpvo'), scheduler)
 
     # Training loop
@@ -132,47 +142,56 @@ def train(config):
             so = total_steps < 1000 and ckpt is None
 
             poses = SE3(poses).inv()
-            traj = net(images, poses, disps, intrinsics, M=M, STEPS=STEPS, structure_only=so)
 
-            loss = 0.0
-            for i, (v, x, y, P1, P2, kl) in enumerate(traj):
-                e = (x - y).norm(dim=-1)
-                e = e.reshape(-1, net.P**2)[(v > 0.5).reshape(-1)].min(dim=-1).values
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                start = time.time()                
+                traj = net(images, poses, disps, intrinsics, M=M, STEPS=STEPS, structure_only=so)
+                print(f"Forward time: {time.time() - start:.3f}s")
 
-                N = P1.shape[1]
-                ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N), indexing='ij')
-                ii = ii.reshape(-1).cuda()
-                jj = jj.reshape(-1).cuda()
+                loss = 0.0
+                for i, (v, x, y, P1, P2, kl) in enumerate(traj):
+                    start = time.time()
+                    e = (x - y).norm(dim=-1)
+                    e = e.reshape(-1, net.P**2)[(v > 0.5).reshape(-1)].min(dim=-1).values
 
-                k = ii != jj
-                ii = ii[k]
-                jj = jj[k]
+                    N = P1.shape[1]
+                    ii, jj = torch.meshgrid(torch.arange(N), torch.arange(N), indexing='ij')
+                    ii = ii.reshape(-1).cuda()
+                    jj = jj.reshape(-1).cuda()
 
-                P1 = P1.inv()
-                P2 = P2.inv()
+                    k = ii != jj
+                    ii = ii[k]
+                    jj = jj[k]
 
-                t1 = P1.matrix()[...,:3,3]
-                t2 = P2.matrix()[...,:3,3]
+                    P1 = P1.inv()
+                    P2 = P2.inv()
 
-                s = kabsch_umeyama(t2[0], t1[0]).detach().clamp(max=10.0)
-                P1 = P1.scale(s.view(1, 1))
+                    t1 = P1.matrix()[...,:3,3]
+                    t2 = P2.matrix()[...,:3,3]
 
-                dP = P1[:,ii].inv() * P1[:,jj]
-                dG = P2[:,ii].inv() * P2[:,jj]
+                    s = kabsch_umeyama(t2[0], t1[0]).detach().clamp(max=10.0)
+                    P1 = P1.scale(s.view(1, 1))
 
-                e1 = (dP * dG.inv()).log()
-                tr = e1[...,0:3].norm(dim=-1)
-                ro = e1[...,3:6].norm(dim=-1)
+                    dP = P1[:,ii].inv() * P1[:,jj]
+                    dG = P2[:,ii].inv() * P2[:,jj]
 
-                loss += flow_weight * e.mean()
-                if not so and i >= 2:
-                    loss += pose_weight * (tr.mean() + ro.mean())
+                    e1 = (dP * dG.inv()).log()
+                    tr = e1[...,0:3].norm(dim=-1)
+                    ro = e1[...,3:6].norm(dim=-1)
 
-            loss += kl
-            loss.backward()
+                    loss += flow_weight * e.mean()
+                    if not so and i >= 2:
+                        loss += pose_weight * (tr.mean() + ro.mean())
 
+                    print(f"Loss calc time: {time.time() - start:.3f}s")
+
+                loss += kl
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(net.parameters(), clip)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()
 
             total_steps += 1

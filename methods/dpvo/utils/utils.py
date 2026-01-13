@@ -13,7 +13,12 @@ def image2gray(image):
     cv2.waitKey()
 
 
+@torch.amp.autocast('cuda', enabled=False)
 def kabsch_umeyama(A, B):
+    # SVD requires FP32 - disable autocast and convert inputs
+    A = A.float()
+    B = B.float()
+
     n, m = A.shape
     EA = torch.mean(A, axis=0)
     EB = torch.mean(B, axis=0)
