@@ -210,9 +210,20 @@ All tests passed! FP16 support is working correctly.
 - Changed `atomicAdd` to `gpuAtomicAdd` for FP16 compatibility
 - Uses `AT_DISPATCH_FLOATING_TYPES_AND_HALF` for type dispatch
 
-**Python Changes (`train.py`):**
+**Correlation Layer Changes (`dpvo/altcorr/correlation.py`):**
+- `coords` tensor is always converted to float32 (required by CUDA kernel design)
+- `fmap1`, `fmap2` tensors support FP16 for faster computation
+
+**Lietorch Changes (`dpvo/lietorch/group_ops.py`):**
+- All Lie group operations (Exp, Log, Inv, Mul, Adj, AdjT, etc.) convert inputs to float32
+- Outputs are converted back to original dtype after computation
+- This ensures numerical stability for quaternion and matrix operations
+
+**Training Script Changes (`train.py`):**
 - Added `torch.amp.GradScaler` for gradient scaling
 - Wrapped forward pass with `torch.amp.autocast('cuda')`
+
+**Utility Changes (`utils/utils.py`):**
 - Added `@torch.amp.autocast('cuda', enabled=False)` decorator to `kabsch_umeyama` (SVD requires FP32)
 
 ### Numerical Accuracy

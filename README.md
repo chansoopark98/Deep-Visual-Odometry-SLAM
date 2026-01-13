@@ -105,7 +105,12 @@ FP16 training is enabled by setting `amp: true` in the config. This provides:
 - ~40% less GPU memory usage
 - Maintained numerical accuracy (< 1% relative error)
 
-The CUDA kernels (`cuda_corr`, `cuda_ba`, `lietorch_backends`) have been modified to support FP16 operations with proper numerical stability.
+**FP16 Compatibility:**
+- `cuda_corr`: Feature maps (fmap1, fmap2) use FP16, coordinates use FP32
+- `lietorch`: All Lie group operations internally use FP32 for numerical stability
+- `kabsch_umeyama`: SVD operations use FP32 (autocast disabled)
+
+See [INSTALL.md](methods/dpvo/INSTALL.md#fp16amp-support) for implementation details.
 
 ## Project Structure
 
@@ -116,10 +121,10 @@ Deep-Visual-Odometry-SLAM/
 │       ├── dpvo/                # Core modules
 │       │   ├── altcorr/         # CUDA correlation kernels (FP16 supported)
 │       │   ├── fastba/          # CUDA bundle adjustment
-│       │   ├── lietorch/        # Lie group operations
+│       │   ├── lietorch/        # Lie group operations (FP32 internally)
 │       │   └── data_readers/    # Dataset loaders
 │       ├── config/              # Training configurations
-│       ├── train.py             # Training script
+│       ├── train.py             # Training script (AMP support)
 │       └── INSTALL.md           # Installation guide
 ├── modules/
 │   ├── eigen-3.4.0/             # Eigen3 library
