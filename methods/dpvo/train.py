@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 import torch
 from torch.utils.data import DataLoader
-from dpvo.data_readers.factory import dataset_factory
+from dpvo.data_readers.factory import dataset_factory, dataset_factory_multi
 
 from dpvo.lietorch import SE3
 from dpvo.logger import Logger
@@ -22,23 +22,22 @@ def load_config(config_path):
 def train(config):
     """Main training loop."""
 
-    # Find active dataset
-    dataset_type = None
+    # Find active datasets
+    active_datasets = []
     for name in ['tartan', 'redwood']:
         if config['dataset'].get(name, {}).get('use', False):
-            dataset_type = name
-            break
+            active_datasets.append(name)
 
-    if dataset_type is None:
+    if not active_datasets:
         raise ValueError("No dataset enabled. Set 'use: true' for at least one dataset.")
 
     # Print configuration
     print("=" * 60)
     print("Training Configuration")
     print("=" * 60)
-    print(f"  Dataset: {dataset_type}")
-    print(f"  Datapath: {config['dataset'][dataset_type]['path']}")
-    print(f"  Mode: {config['dataset'][dataset_type].get('mode', 'train')}")
+    print(f"  Dataset: {', '.join(active_datasets)}")
+    for ds_name in active_datasets:
+        print(f"    - {ds_name}: {config['dataset'][ds_name]['path']}")
     print(f"  Steps: {config['training'].get('steps', 240000)}")
     print(f"  Learning rate: {config['training'].get('lr', 0.00008)}")
     print(f"  Scheduler: {config.get('scheduler', {}).get('type', 'onecycle')}")
@@ -49,12 +48,30 @@ def train(config):
     print("=" * 60)
 
     # Build dataset
-    db = dataset_factory(
-        [dataset_type],
-        datapath=config['dataset'][dataset_type]['path'],
-        n_frames=config['model'].get('n_frames', 15),
-        mode=config['dataset'][dataset_type].get('mode', 'train')
-    )
+    if len(active_datasets) == 1:
+        # Single dataset
+        dataset_type = active_datasets[0]
+        db = dataset_factory(
+            [dataset_type],
+            datapath=config['dataset'][dataset_type]['path'],
+            n_frames=config['model'].get('n_frames', 15),
+            mode=config['dataset'][dataset_type].get('mode', 'train')
+        )
+    else:
+        # Multiple datasets
+        dataset_configs = []
+        for ds_name in active_datasets:
+            ds_cfg = {
+                'name': ds_name,
+                'datapath': config['dataset'][ds_name]['path'],
+                'mode': config['dataset'][ds_name].get('mode', 'train')
+            }
+            dataset_configs.append(ds_cfg)
+
+        db = dataset_factory_multi(
+            dataset_configs,
+            common_kwargs={'n_frames': config['model'].get('n_frames', 15)}
+        )
     train_loader = DataLoader(
         db,
         batch_size=config['dataloader'].get('batch_size', 1),

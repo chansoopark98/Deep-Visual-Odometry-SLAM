@@ -9,7 +9,7 @@ dataset:
     mode: train
 
   redwood:
-    use: false
+    use: true
     path: datasets/redwood
     mode: train
 

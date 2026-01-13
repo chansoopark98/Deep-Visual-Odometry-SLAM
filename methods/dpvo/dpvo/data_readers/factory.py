@@ -8,49 +8,73 @@ from .tartan import TartanAir
 from .redwood import Redwood
 
 
+DATASET_MAP = {
+    'tartan': TartanAir,
+    'redwood': Redwood,
+}
+
+
 def dataset_factory(dataset_list, **kwargs):
     """
-    Create a combined dataset from multiple sources.
+    Create a combined dataset from multiple sources (single datapath).
 
     Args:
-        dataset_list: list of dataset names, e.g., ['tartan'], ['redwood'], ['tartan', 'redwood']
+        dataset_list: list of dataset names, e.g., ['tartan'], ['redwood']
         **kwargs: arguments passed to dataset constructors
-            - datapath: root path to dataset
-            - n_frames: number of frames per sample
-            - crop_size: output image size [H, W]
-            - fmin, fmax: optical flow thresholds
-            - aug: whether to apply augmentation
-            - mode: 'train', 'validation', 'test' (for Redwood)
+
+    Returns:
+        ConcatDataset combining all requested datasets
+    """
+    from torch.utils.data import ConcatDataset
+
+    db_list = []
+    for key in dataset_list:
+        if key not in DATASET_MAP:
+            raise ValueError(f"Unknown dataset: {key}. Available: {list(DATASET_MAP.keys())}")
+
+        db = DATASET_MAP[key](**kwargs)
+        print("Dataset {} has {} images".format(key, len(db)))
+        db_list.append(db)
+
+    return ConcatDataset(db_list)
+
+
+def dataset_factory_multi(dataset_configs, common_kwargs=None):
+    """
+    Create a combined dataset from multiple sources with separate configs.
+
+    Args:
+        dataset_configs: list of dicts, each containing:
+            - 'name': dataset name ('tartan' or 'redwood')
+            - 'datapath': path to dataset
+            - 'mode': (optional) 'train', 'validation', 'test'
+        common_kwargs: dict of common arguments (n_frames, crop_size, etc.)
 
     Returns:
         ConcatDataset combining all requested datasets
 
     Example:
-        # Single dataset
-        db = dataset_factory(['tartan'], datapath='datasets/TartanAir', n_frames=15)
-
-        # Multiple datasets (requires separate datapaths)
-        db = dataset_factory(['redwood'], datapath='datasets/redwood', n_frames=15, mode='train')
-
-        # Combined training
-        tartan_db = dataset_factory(['tartan'], datapath='datasets/TartanAir', n_frames=15)
-        redwood_db = dataset_factory(['redwood'], datapath='datasets/redwood', n_frames=15, mode='train')
-        combined_db = ConcatDataset([tartan_db, redwood_db])
+        dataset_configs = [
+            {'name': 'tartan', 'datapath': 'datasets/TartanAir'},
+            {'name': 'redwood', 'datapath': 'datasets/redwood', 'mode': 'train'},
+        ]
+        db = dataset_factory_multi(dataset_configs, {'n_frames': 15})
     """
     from torch.utils.data import ConcatDataset
 
-    dataset_map = {
-        'tartan': TartanAir,
-        'redwood': Redwood,
-    }
+    if common_kwargs is None:
+        common_kwargs = {}
 
     db_list = []
-    for key in dataset_list:
-        if key not in dataset_map:
-            raise ValueError(f"Unknown dataset: {key}. Available: {list(dataset_map.keys())}")
+    for cfg in dataset_configs:
+        name = cfg.pop('name')
+        if name not in DATASET_MAP:
+            raise ValueError(f"Unknown dataset: {name}. Available: {list(DATASET_MAP.keys())}")
 
-        db = dataset_map[key](**kwargs)
-        print("Dataset {} has {} images".format(key, len(db)))
+        # Merge common kwargs with dataset-specific kwargs
+        kwargs = {**common_kwargs, **cfg}
+        db = DATASET_MAP[name](**kwargs)
+        print("Dataset {} has {} images".format(name, len(db)))
         db_list.append(db)
 
     return ConcatDataset(db_list)
