@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 import torch
 from torch.utils.data import DataLoader
-from dpvo.data_readers.factory import dataset_factory, dataset_factory_multi
+from dpvo.data_readers.factory import dataset_factory
 
 from dpvo.lietorch import SE3
 from dpvo.logger import Logger
@@ -48,35 +48,23 @@ def train(config):
     print("=" * 60)
 
     # Build dataset
-    if len(active_datasets) == 1:
-        # Single dataset
-        dataset_type = active_datasets[0]
-        db = dataset_factory(
-            [dataset_type],
-            datapath=config['dataset'][dataset_type]['path'],
-            n_frames=config['model'].get('n_frames', 15),
-            mode=config['dataset'][dataset_type].get('mode', 'train')
-        )
-    else:
-        # Multiple datasets
-        dataset_configs = []
-        for ds_name in active_datasets:
-            ds_cfg = {
-                'name': ds_name,
-                'datapath': config['dataset'][ds_name]['path'],
-                'mode': config['dataset'][ds_name].get('mode', 'train')
-            }
-            dataset_configs.append(ds_cfg)
+    dataset_configs = []
+    for ds_name in active_datasets:
+        dataset_configs.append({
+            'name': ds_name,
+            'datapath': config['dataset'][ds_name]['path'],
+            'mode': config['dataset'][ds_name].get('mode', 'train')
+        })
 
-        db = dataset_factory_multi(
-            dataset_configs,
-            common_kwargs={'n_frames': config['model'].get('n_frames', 15)}
-        )
+    db = dataset_factory(
+        dataset_configs,
+        n_frames=config['model'].get('n_frames', 15)
+    )
     train_loader = DataLoader(
         db,
         batch_size=config['dataloader'].get('batch_size', 1),
         shuffle=True,
-        num_workers=config['dataloader'].get('num_workers', 4)
+        num_workers=config['dataloader'].get('num_workers', 8)
     )
 
     # Model

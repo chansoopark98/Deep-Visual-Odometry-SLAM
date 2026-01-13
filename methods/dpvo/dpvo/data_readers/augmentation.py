@@ -1,5 +1,5 @@
 import torch
-import torchvision.transforms as transforms
+import torchvision.transforms.functional as TF
 import numpy as np
 import torch.nn.functional as F
 
@@ -9,27 +9,21 @@ class RGBDAugmentor:
 
     def __init__(self, crop_size):
         self.crop_size = crop_size
-        self.augcolor = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2/3.14),
-            transforms.RandomGrayscale(p=0.1),
-            transforms.RandomInvert(p=0.1),
-            transforms.ToTensor()])
-
         self.max_scale = 0.5
+
+        # ColorJitter parameters (same as original)
+        self.brightness = 0.4
+        self.contrast = 0.4
+        self.saturation = 0.4
+        self.hue = 0.2 / 3.14
 
     def spatial_transform(self, images, depths, poses, intrinsics):
         """ cropping and resizing """
         ht, wd = images.shape[2:]
 
-        max_scale = self.max_scale
-        min_scale = np.log2(np.maximum(
-            (self.crop_size[0] + 1) / float(ht),
-            (self.crop_size[1] + 1) / float(wd)))
-
         scale = 1
         if np.random.rand() < 0.8:
-            scale = 2 ** np.random.uniform(0.0, max_scale)
+            scale = 2 ** np.random.uniform(0.0, self.max_scale)
 
         intrinsics = scale * intrinsics
 
@@ -53,11 +47,48 @@ class RGBDAugmentor:
         return images, poses, depths, intrinsics
 
     def color_transform(self, images):
-        """ color jittering """
+        """ color jittering using native torch operations (no PIL conversion) """
         num, ch, ht, wd = images.shape
-        images = images.permute(1, 2, 3, 0).reshape(ch, ht, wd*num)
-        images = 255 * self.augcolor(images[[2,1,0]] / 255.0)
-        return images[[2,1,0]].reshape(ch, ht, wd, num).permute(3,0,1,2).contiguous()
+
+        # Reshape: [N, C, H, W] -> [C, H, W*N] for batch processing
+        images = images.permute(1, 2, 3, 0).reshape(ch, ht, wd * num)
+
+        # Convert BGR to RGB and normalize to [0, 1]
+        images = images[[2, 1, 0]] / 255.0
+
+        # Apply ColorJitter in random order (same as torchvision.transforms.ColorJitter)
+        fn_idx = torch.randperm(4)
+        for fn_id in fn_idx:
+            if fn_id == 0:
+                # Brightness
+                brightness_factor = 1.0 + np.random.uniform(-self.brightness, self.brightness)
+                images = TF.adjust_brightness(images, brightness_factor)
+            elif fn_id == 1:
+                # Contrast
+                contrast_factor = 1.0 + np.random.uniform(-self.contrast, self.contrast)
+                images = TF.adjust_contrast(images, contrast_factor)
+            elif fn_id == 2:
+                # Saturation
+                saturation_factor = 1.0 + np.random.uniform(-self.saturation, self.saturation)
+                images = TF.adjust_saturation(images, saturation_factor)
+            elif fn_id == 3:
+                # Hue
+                hue_factor = np.random.uniform(-self.hue, self.hue)
+                images = TF.adjust_hue(images, hue_factor)
+
+        # RandomGrayscale (p=0.1)
+        if np.random.rand() < 0.1:
+            images = TF.rgb_to_grayscale(images, num_output_channels=3)
+
+        # RandomInvert (p=0.1)
+        if np.random.rand() < 0.1:
+            images = TF.invert(images)
+
+        # Convert RGB back to BGR and scale to [0, 255]
+        images = images[[2, 1, 0]] * 255.0
+
+        # Reshape back: [C, H, W*N] -> [N, C, H, W]
+        return images.reshape(ch, ht, wd, num).permute(3, 0, 1, 2).contiguous()
 
     def __call__(self, images, poses, depths, intrinsics):
         if np.random.rand() < 0.5:

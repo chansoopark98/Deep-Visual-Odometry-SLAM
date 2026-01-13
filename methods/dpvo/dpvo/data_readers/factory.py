@@ -14,60 +14,44 @@ DATASET_MAP = {
 }
 
 
-def dataset_factory(dataset_list, **kwargs):
+def dataset_factory(dataset_configs, **common_kwargs):
     """
-    Create a combined dataset from multiple sources (single datapath).
+    Create a combined dataset from one or more sources.
 
     Args:
-        dataset_list: list of dataset names, e.g., ['tartan'], ['redwood']
-        **kwargs: arguments passed to dataset constructors
-
-    Returns:
-        ConcatDataset combining all requested datasets
-    """
-    from torch.utils.data import ConcatDataset
-
-    db_list = []
-    for key in dataset_list:
-        if key not in DATASET_MAP:
-            raise ValueError(f"Unknown dataset: {key}. Available: {list(DATASET_MAP.keys())}")
-
-        db = DATASET_MAP[key](**kwargs)
-        print("Dataset {} has {} images".format(key, len(db)))
-        db_list.append(db)
-
-    return ConcatDataset(db_list)
-
-
-def dataset_factory_multi(dataset_configs, common_kwargs=None):
-    """
-    Create a combined dataset from multiple sources with separate configs.
-
-    Args:
-        dataset_configs: list of dicts, each containing:
+        dataset_configs: list of dataset configurations, each containing:
             - 'name': dataset name ('tartan' or 'redwood')
             - 'datapath': path to dataset
             - 'mode': (optional) 'train', 'validation', 'test'
-        common_kwargs: dict of common arguments (n_frames, crop_size, etc.)
+        **common_kwargs: common arguments passed to all dataset constructors
+            - n_frames: number of frames per sample
+            - crop_size: output image size [H, W]
+            - fmin, fmax: optical flow thresholds
+            - aug: whether to apply augmentation
 
     Returns:
         ConcatDataset combining all requested datasets
 
     Example:
-        dataset_configs = [
+        # Single dataset
+        db = dataset_factory([
+            {'name': 'tartan', 'datapath': 'datasets/TartanAir'}
+        ], n_frames=15)
+
+        # Multiple datasets
+        db = dataset_factory([
             {'name': 'tartan', 'datapath': 'datasets/TartanAir'},
             {'name': 'redwood', 'datapath': 'datasets/redwood', 'mode': 'train'},
-        ]
-        db = dataset_factory_multi(dataset_configs, {'n_frames': 15})
+        ], n_frames=15)
     """
     from torch.utils.data import ConcatDataset
 
-    if common_kwargs is None:
-        common_kwargs = {}
-
     db_list = []
     for cfg in dataset_configs:
+        # Copy config to avoid modifying original
+        cfg = cfg.copy()
         name = cfg.pop('name')
+
         if name not in DATASET_MAP:
             raise ValueError(f"Unknown dataset: {name}. Available: {list(DATASET_MAP.keys())}")
 
