@@ -45,13 +45,22 @@ class Logger:
 
         self.total_steps += 1
 
-    def write_dict(self, results):
+    def write_dict(self, results, step=None):
         if self.writer is None:
             self.writer = SummaryWriter("runs/{}".format(self.name))
             print([k for k in self.running_loss])
-            
+
+        global_step = step if step is not None else self.total_steps
         for key in results:
-            self.writer.add_scalar(key, results[key], self.total_steps)
+            self.writer.add_scalar(key, results[key], global_step)
+
+    def add_figure(self, tag, figure, step=None):
+        """Add a matplotlib figure to TensorBoard."""
+        if self.writer is None:
+            self.writer = SummaryWriter("runs/{}".format(self.name))
+
+        global_step = step if step is not None else self.total_steps
+        self.writer.add_figure(tag, figure, global_step)
 
     def close(self):
         self.writer.close()

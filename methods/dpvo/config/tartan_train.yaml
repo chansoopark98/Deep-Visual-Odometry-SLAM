@@ -15,8 +15,8 @@ dataset:
 
 # Training Hyperparameters
 training:
-  name: dpvo_tartan  # Experiment name (used for checkpoint naming)
-  ckpt: null  # Resume from checkpoint (null or path)
+  name: dpvo_tartan_redwood  # Experiment name (used for checkpoint naming)
+  ckpt: ./methods/dpvo/dpvo.pth  # Pre-trained checkpoint (TartanAir 240k steps)
   steps: 240000  # Total training steps
   lr: 0.00008  # Learning rate
   clip: 10.0  # Gradient clipping threshold
@@ -50,3 +50,9 @@ loss:
 dataloader:
   batch_size: 1  # Batch size
   num_workers: 8  # Number of data loading workers
+
+# Validation Configuration
+validation:
+  enabled: true  # Enable/disable validation during training
+  freq: 500  # Validation frequency (steps)
+  num_samples: 8  # Number of validation samples to evaluate
