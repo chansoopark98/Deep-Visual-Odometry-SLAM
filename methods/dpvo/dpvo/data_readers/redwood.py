@@ -9,7 +9,6 @@ import os.path as osp
 from scipy.spatial.transform import Rotation
 from .base import RGBDDataset
 
-
 class Redwood(RGBDDataset):
     """
     Redwood Indoor RGBD Dataset

@@ -11,6 +11,7 @@ import random
 import json
 import pickle
 import os.path as osp
+import matplotlib.pyplot as plt
 
 from .augmentation import RGBDAugmentor
 from .rgbd_utils import *
@@ -178,10 +179,22 @@ class RGBDDataset(data.Dataset):
         poses = np.stack(poses).astype(np.float32)
         intrinsics = np.stack(intrinsics).astype(np.float32)
 
+        # clip depth and compute disparity safely
+        max_depth = 20.0
+        min_depth = 0.1  # minimum valid depth (1cm)
+
+        # Mark invalid depths (too far or too close/zero)
+        invalid_mask = (depths > max_depth) | (depths < min_depth)
+
+        # Compute disparity with safe division
+        depths_safe = np.where(invalid_mask, 1.0, depths)  # temporary safe value
+        disps = 1.0 / depths_safe
+        disps[invalid_mask] = 0.0  # invalid pixels have 0 disparity
+
         images = torch.from_numpy(images).float()
         images = images.permute(0, 3, 1, 2)
 
-        disps = torch.from_numpy(1.0 / depths)
+        disps = torch.from_numpy(disps)
         poses = torch.from_numpy(poses)
         intrinsics = torch.from_numpy(intrinsics)
 

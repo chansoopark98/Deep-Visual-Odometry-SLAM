@@ -2,14 +2,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import OrderedDict
 
-from . import torch_scatter
-from .torch_scatter import scatter_sum
 
 from . import fastba
 from . import altcorr
-from . import lietorch
 from .lietorch import SE3
 
 from .extractor import BasicEncoder, BasicEncoder4
@@ -19,9 +15,8 @@ from .utils import *
 from .ba import BA
 from . import projective_ops as pops
 
-from functools import partial
-autocast = partial(torch.amp.autocast, 'cuda')
-import matplotlib.pyplot as plt
+# from functools import partial
+# autocast = partial(torch.amp.autocast, 'cuda')
 
 DIM = 384
 

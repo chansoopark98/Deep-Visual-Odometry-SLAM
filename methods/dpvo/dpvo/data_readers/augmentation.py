@@ -18,12 +18,17 @@ class RGBDAugmentor:
         self.hue = 0.2 / 3.14
 
     def spatial_transform(self, images, depths, poses, intrinsics):
-        """ cropping and resizing """
+        """ cropping and resizing with random crop augmentation """
         ht, wd = images.shape[2:]
 
-        scale = 1
+        # Calculate minimum scale to ensure image is larger than crop_size
+        min_scale = max(self.crop_size[0] / ht, self.crop_size[1] / wd)
+        min_scale = max(min_scale, 1.0)  # At least scale 1.0
+
+        # Random scale (80% of the time scale up, always ensure >= min_scale)
+        scale = min_scale
         if np.random.rand() < 0.8:
-            scale = 2 ** np.random.uniform(0.0, self.max_scale)
+            scale = 2 ** np.random.uniform(np.log2(min_scale), np.log2(min_scale) + self.max_scale)
 
         intrinsics = scale * intrinsics
 
@@ -35,10 +40,14 @@ class RGBDAugmentor:
         images = F.interpolate(images, (ht1, wd1), mode='bicubic', align_corners=False)
         depths = F.interpolate(depths, (ht1, wd1), recompute_scale_factor=False)
 
-        # always perform center crop (TODO: try non-center crops)
-        y0 = (images.shape[2] - self.crop_size[0]) // 2
-        x0 = (images.shape[3] - self.crop_size[1]) // 2
+        # Random crop (instead of center crop)
+        max_y0 = max(0, images.shape[2] - self.crop_size[0])
+        max_x0 = max(0, images.shape[3] - self.crop_size[1])
 
+        y0 = np.random.randint(0, max_y0 + 1) if max_y0 > 0 else 0
+        x0 = np.random.randint(0, max_x0 + 1) if max_x0 > 0 else 0
+
+        # Adjust intrinsics: cx, cy need to be shifted by crop offset
         intrinsics = intrinsics - torch.tensor([0.0, 0.0, x0, y0])
         images = images[:, :, y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
         depths = depths[:, :, y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]

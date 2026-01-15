@@ -1,11 +1,10 @@
 import os
 import sys
+import gc
 import yaml
 from collections import OrderedDict
 
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for TensorBoard
 import matplotlib.pyplot as plt
 
 import torch
@@ -15,106 +14,16 @@ from dpvo.data_readers.factory import dataset_factory
 from dpvo.lietorch import SE3
 from dpvo.logger import Logger
 from dpvo.net import VONet
-from utils.utils import kabsch_umeyama
+from utils.utils import kabsch_umeyama, align_trajectory_umeyama
+from utils.plot import *
 
+import matplotlib
+matplotlib.use('Agg')
 
 def load_config(config_path):
     """Load configuration from YAML file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
-
-
-def plot_trajectory_comparison(pred_traj, gt_traj, title="Trajectory Comparison"):
-    """
-    Create a matplotlib figure comparing predicted and GT trajectories.
-
-    Args:
-        pred_traj: (N, 3) predicted trajectory positions
-        gt_traj: (N, 3) ground truth trajectory positions
-        title: Plot title
-
-    Returns:
-        matplotlib figure
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
-    # XY plane (top-down view)
-    axes[0].plot(gt_traj[:, 0], gt_traj[:, 1], 'b--', label='GT', linewidth=2)
-    axes[0].plot(pred_traj[:, 0], pred_traj[:, 1], 'r-', label='Pred', linewidth=2)
-    axes[0].scatter(gt_traj[0, 0], gt_traj[0, 1], c='green', s=100, marker='o', zorder=5, label='Start')
-    axes[0].scatter(gt_traj[-1, 0], gt_traj[-1, 1], c='purple', s=100, marker='x', zorder=5, label='End')
-    axes[0].set_xlabel('X')
-    axes[0].set_ylabel('Y')
-    axes[0].set_title('XY Plane (Top-down)')
-    axes[0].legend()
-    axes[0].axis('equal')
-    axes[0].grid(True, alpha=0.3)
-
-    # XZ plane (side view)
-    axes[1].plot(gt_traj[:, 0], gt_traj[:, 2], 'b--', label='GT', linewidth=2)
-    axes[1].plot(pred_traj[:, 0], pred_traj[:, 2], 'r-', label='Pred', linewidth=2)
-    axes[1].scatter(gt_traj[0, 0], gt_traj[0, 2], c='green', s=100, marker='o', zorder=5)
-    axes[1].scatter(gt_traj[-1, 0], gt_traj[-1, 2], c='purple', s=100, marker='x', zorder=5)
-    axes[1].set_xlabel('X')
-    axes[1].set_ylabel('Z')
-    axes[1].set_title('XZ Plane (Side)')
-    axes[1].legend()
-    axes[1].axis('equal')
-    axes[1].grid(True, alpha=0.3)
-
-    # YZ plane (front view)
-    axes[2].plot(gt_traj[:, 1], gt_traj[:, 2], 'b--', label='GT', linewidth=2)
-    axes[2].plot(pred_traj[:, 1], pred_traj[:, 2], 'r-', label='Pred', linewidth=2)
-    axes[2].scatter(gt_traj[0, 1], gt_traj[0, 2], c='green', s=100, marker='o', zorder=5)
-    axes[2].scatter(gt_traj[-1, 1], gt_traj[-1, 2], c='purple', s=100, marker='x', zorder=5)
-    axes[2].set_xlabel('Y')
-    axes[2].set_ylabel('Z')
-    axes[2].set_title('YZ Plane (Front)')
-    axes[2].legend()
-    axes[2].axis('equal')
-    axes[2].grid(True, alpha=0.3)
-
-    fig.suptitle(title, fontsize=14, fontweight='bold')
-    plt.tight_layout()
-
-    return fig
-
-
-def plot_trajectory_3d(pred_traj, gt_traj, title="3D Trajectory"):
-    """Create a 3D trajectory comparison plot."""
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    ax.plot(gt_traj[:, 0], gt_traj[:, 1], gt_traj[:, 2], 'b--', label='GT', linewidth=2)
-    ax.plot(pred_traj[:, 0], pred_traj[:, 1], pred_traj[:, 2], 'r-', label='Pred', linewidth=2)
-    ax.scatter(gt_traj[0, 0], gt_traj[0, 1], gt_traj[0, 2], c='green', s=100, marker='o', label='Start')
-    ax.scatter(gt_traj[-1, 0], gt_traj[-1, 1], gt_traj[-1, 2], c='purple', s=100, marker='x', label='End')
-
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_title(title)
-    ax.legend()
-
-    plt.tight_layout()
-    return fig
-
-
-def compute_trajectory_error(pred_traj, gt_traj):
-    """Compute trajectory error metrics."""
-    # Align trajectories using Umeyama alignment
-    pred_centered = pred_traj - pred_traj.mean(axis=0)
-    gt_centered = gt_traj - gt_traj.mean(axis=0)
-
-    # Compute scale
-    scale = np.sqrt((gt_centered ** 2).sum() / (pred_centered ** 2).sum())
-    pred_scaled = pred_centered * scale
-
-    # Compute ATE (Absolute Trajectory Error)
-    ate = np.sqrt(((pred_scaled - gt_centered) ** 2).sum(axis=1)).mean()
-
-    return ate, scale
-
 
 @torch.no_grad()
 def validate(net, val_loader, config, logger, step, num_samples=8):
@@ -155,6 +64,7 @@ def validate(net, val_loader, config, logger, step, num_samples=8):
         traj = net(images, gt_poses, disps, intrinsics, M=M, STEPS=STEPS, structure_only=False)
 
         # Get final prediction (last iteration)
+        # estimation result = (valid, coords, coords_gt, Gs[:,:n], Ps[:,:n], kl)
         v, x, y, P1, P2, kl = traj[-1]
 
         # P1: predicted poses, P2: GT poses
@@ -165,20 +75,11 @@ def validate(net, val_loader, config, logger, step, num_samples=8):
         pred_t = pred_poses.matrix()[0, :, :3, 3].cpu().numpy()  # (N, 3)
         gt_t = gt_poses_final.matrix()[0, :, :3, 3].cpu().numpy()  # (N, 3)
 
-        # Normalize to start from origin (first frame = [0,0,0])
-        pred_t = pred_t - pred_t[0:1]  # Subtract first frame position
-        gt_t = gt_t - gt_t[0:1]        # Subtract first frame position
+        # Full Umeyama alignment (scale + rotation + translation)
+        pred_t_aligned, scale, R, t = align_trajectory_umeyama(pred_t, gt_t)
 
-        # Scale alignment using kabsch_umeyama
-        s = kabsch_umeyama(
-            torch.from_numpy(gt_t).cuda(),
-            torch.from_numpy(pred_t).cuda()
-        ).item()
-        s = min(s, 10.0)  # Clamp scale
-        pred_t_scaled = pred_t * s
-
-        # Compute ATE
-        ate, _ = compute_trajectory_error(pred_t_scaled, gt_t)
+        # Compute ATE (Absolute Trajectory Error)
+        ate = np.sqrt(((pred_t_aligned - gt_t) ** 2).sum(axis=1)).mean()
         all_ate.append(ate)
 
         print(f"  Sample {sample_idx+1}/{num_samples}: ATE = {ate:.4f}")
@@ -187,18 +88,20 @@ def validate(net, val_loader, config, logger, step, num_samples=8):
         if sample_idx < 4:
             # 2D comparison plot
             fig_2d = plot_trajectory_comparison(
-                pred_t_scaled, gt_t,
+                pred_t_aligned, gt_t,
                 title=f"Sample {sample_idx+1} (Step {step}, ATE: {ate:.3f})"
             )
             logger.add_figure(f"val/trajectory_2d_sample{sample_idx+1}", fig_2d, step)
+            fig_2d.clf()
             plt.close(fig_2d)
 
             # 3D plot
             fig_3d = plot_trajectory_3d(
-                pred_t_scaled, gt_t,
+                pred_t_aligned, gt_t,
                 title=f"3D Trajectory Sample {sample_idx+1} (ATE: {ate:.3f})"
             )
             logger.add_figure(f"val/trajectory_3d_sample{sample_idx+1}", fig_3d, step)
+            fig_3d.clf()
             plt.close(fig_3d)
 
     # Log aggregate metrics
@@ -218,6 +121,10 @@ def validate(net, val_loader, config, logger, step, num_samples=8):
     print(f"  Mean ATE: {mean_ate:.4f}")
     print(f"  Median ATE: {median_ate:.4f}")
     print(f"{'='*60}\n")
+
+    # Thorough matplotlib cleanup to prevent memory leaks
+    plt.close('all')
+    gc.collect()
 
     net.train()
 
@@ -279,18 +186,35 @@ def train(config):
         persistent_workers=True
     )
 
-    # Build validation dataset (same datasets but can use different mode)
+    # Build validation dataset from validation config
+    val_cfg = config.get('validation', {})
+    val_dataset_cfg = val_cfg.get('dataset', {})
+
     val_dataset_configs = []
-    for ds_name in active_datasets:
-        val_dataset_configs.append({
-            'name': ds_name,
-            'datapath': config['dataset'][ds_name]['path'],
-            'mode': 'train'  # Use train data for validation samples
-        })
+    for ds_name, ds_cfg in val_dataset_cfg.items():
+        if ds_cfg.get('use', False):
+            val_dataset_configs.append({
+                'name': ds_name,
+                'datapath': ds_cfg['path'],
+                'mode': ds_cfg.get('mode', 'validation')
+            })
+
+    # Fallback: if no validation dataset specified, use training datasets
+    if not val_dataset_configs:
+        print("Warning: No validation dataset specified, using training datasets")
+        for ds_name in active_datasets:
+            val_dataset_configs.append({
+                'name': ds_name,
+                'datapath': config['dataset'][ds_name]['path'],
+                'mode': 'train'
+            })
+
+    print(f"  Validation dataset: {[c['name'] + '/' + c['mode'] for c in val_dataset_configs]}")
 
     val_db = dataset_factory(
         val_dataset_configs,
-        n_frames=config['model'].get('n_frames', 15)
+        n_frames=config['model'].get('n_frames', 15),
+        aug=False  # No augmentation for validation
     )
     val_loader = DataLoader(
         val_db,

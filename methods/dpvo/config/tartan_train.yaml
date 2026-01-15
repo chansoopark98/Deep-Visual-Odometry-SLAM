@@ -56,3 +56,8 @@ validation:
   enabled: true  # Enable/disable validation during training
   freq: 500  # Validation frequency (steps)
   num_samples: 8  # Number of validation samples to evaluate
+  dataset:
+    redwood:
+      use: true
+      path: datasets/redwood
+      mode: validation  # Use validation split
